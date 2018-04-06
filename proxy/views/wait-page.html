@@ -1,6 +1,45 @@
 <!DOCTYPE html>
 <html>
 <body>
-  Your stack is being started.
+  <div id="app"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.1.0/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vue@2.5.16/dist/vue.js"></script>
+
+  <script type="text/javascript">
+    const app = new Vue({
+      el: '#app',
+      template: `
+        <div>
+          <h1>Starting {{ host }}...</h1>
+          <div v-for="step in steps">
+            <h3>{{ step|capitalize }}</h3>
+          </div>
+        </div>
+      `,
+      data: {
+        host: window.location.hostname,
+        steps: [],
+      },
+      created() {
+        const socket = io(`http://${this.host}`);
+
+        socket.on('build.new_step', (step) => {
+          this.steps.push(step);
+        });
+
+        // Just reload the page when the build is finished,
+        // so the proxy will start to do its job
+        socket.on('build.finished', () => {
+          window.location.reload(true);
+        });
+      },
+      filters: {
+        capitalize: (str) => str
+          ? str.charAt(0).toUpperCase() + str.slice(1)
+          : '',
+      }
+    });
+  </script>
 </body>
 </html>

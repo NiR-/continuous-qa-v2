@@ -286,7 +286,7 @@ const cleanupImages = async (client, state) => {
 };
 
 const removeImage = (image, force) => {
-  console.log(`Removing image "${image.id}"...`, image);
+  console.log(`Removing image "${image.name}"...`);
   return image.remove({ force });
 };
 

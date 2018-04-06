@@ -1,15 +1,18 @@
-import http from 'http';
-import httpProxy from 'http-proxy';
-import _ from 'lodash';
 import { ProjectNotFound } from './api';
 import api from './api';
 import * as drivers from './drivers';
 import { ExtendableError, createErrorTransformer } from './errors';
+import EventEmitter from 'events';
+import fs from 'fs';
+import http from 'http';
+import httpProxy from 'http-proxy';
+import io from 'socket.io';
+import _ from 'lodash';
 import * as repoFetchers from './repo-fetchers';
 
-// const waitPage = fs.readFileSync('./views/wait-page.html');
+const waitPage = fs.readFileSync('./views/wait-page.html');
 
-const handleRequest = async (req, res) => {
+const handleRequest = async (proxy, emitter, req, res) => {
   console.log(`New request received (host: ${req.headers.host}, method: ${req.method}, url: ${req.url}, remote: ${req.socket.remoteAddress}).`);
 
   if (['127.0.0.1', '::ffff:127.0.0.1'].indexOf(req.socket.remoteAddress) !== -1) {
@@ -34,13 +37,8 @@ const handleRequest = async (req, res) => {
     return proxy.web(req, res, { target: `http://${stackIp}` });
   }
 
-  const repoFetcher = repoFetchers.get(projectDetails.repoType);
-  const path = await repoFetcher.cloneRepo(projectDetails, version);
-
-  await driver.startStack(stackName, version, path);
-
-  res.writeHead(302, { Location: req.url });
-  res.end();
+  res.writeHead(201);
+  res.end(waitPage);
 };
 
 const handleRequestError = (req, res, err) => {
@@ -52,6 +50,34 @@ const handleRequestError = (req, res, err) => {
 
   res.writeHead(httpError instanceof HttpError ? httpError.statusCode : 500);
   res.end(httpError instanceof HttpError ? httpError.message : '');
+};
+
+const transformToHttpErrors = createErrorTransformer({
+  InvalidHostname: () => new HttpClientError(400, 'Invalid hostname format.'),
+  ProjectNotFound: () => new HttpClientError(404, 'Project not found.'),
+  _: (err) => new HttpServerError(500, err),
+});
+
+const onWsConnection = async (socket) => {
+  const host = socket.handshake.headers.host;
+  console.log(`New connection to the websocket (host: ${host}).`);
+
+  const { projectName, stackName, version } = splitHostname(host);
+  const projectDetails = await api.fetchProjectDetails(projectName);
+  const driver = drivers.get(projectDetails.driver);
+
+  if (await driver.isStackUp(stackName, version)) {
+    return socket.emit('build.finished');
+  }
+
+  socket.emit('build.new_step', 'clone');
+  /*const repoFetcher = repoFetchers.get(projectDetails.repoType);
+  const path = await repoFetcher.cloneRepo(projectDetails, version);
+
+  socket.emit('build.new_step', 'start stack');
+  await driver.startStack(stackName, version, path);
+
+  socket.emit('build.finished');*/
 };
 
 // @TODO: use a LRU cache and limit the number of hostname cached
@@ -102,12 +128,6 @@ class HttpServerError extends HttpError {
   }
 }
 
-const transformToHttpErrors = createErrorTransformer({
-  InvalidHostname: () => new HttpClientError(400, 'Invalid hostname format.'),
-  ProjectNotFound: () => new HttpClientError(404, 'Project not found.'),
-  _: (err) => new HttpServerError(500, err),
-});
-
 const catchPromiseEmitter = (emitter, catcher) => {
   return (...args) => {
     return emitter(...args)
@@ -115,7 +135,22 @@ const catchPromiseEmitter = (emitter, catcher) => {
   };
 };
 
-const proxy = httpProxy.createProxyServer({ xfw: true });
-export const server = http.createServer(
-  catchPromiseEmitter(handleRequest, handleRequestError)
-);
+const createServer = () => {
+  const proxy = httpProxy.createProxyServer({ xfw: true });
+  const emitter = new EventEmitter();
+  const server = http.createServer(catchPromiseEmitter(
+    handleRequest.bind(null, proxy, emitter),
+    handleRequestError
+  ));
+
+  const wsServer = io(server);
+  wsServer.on('connection', onWsConnection);
+
+  emitter.on('new_build', () => {
+
+  });
+
+  return server;
+};
+
+export const server = createServer();

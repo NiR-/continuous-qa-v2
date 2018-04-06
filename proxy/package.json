@@ -2,7 +2,8 @@
   "dependencies": {
     "dockerode": "^2.5.4",
     "http-proxy": "^1.16.2",
-    "lodash": "^4.17.5"
+    "lodash": "^4.17.5",
+    "socket.io": "^2.1.0"
   },
   "devDependencies": {
     "eslint": "^4.19.1",
@@ -10,7 +11,7 @@
     "nodemon": "^1.17.3"
   },
   "scripts": {
-    "dev": "nodemon -w bin/ -w src/ -e js,mjs -x 'npm run server'",
+    "dev": "nodemon -w bin/ -w src/ -w views -e js,mjs,html -x 'npm run server'",
     "server": "node --experimental-modules bin/server.js",
     "cleanup": "node --experimental-modules bin/cleanup.js",
     "lint": "eslint --ext mjs src/"
