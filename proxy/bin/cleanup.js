@@ -1,6 +1,6 @@
 (async () => {
   try {
-    const { cleanup, STATE_STOPPED } = await import('../src/drivers');
+    const { cleanup, STATE_STOPPED } = await import('../src/executors');
 
     console.log('Start cleanup...');
     cleanup(process.argv[2] || STATE_STOPPED);

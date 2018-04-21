@@ -1,43 +1,176 @@
 <!DOCTYPE html>
 <html>
-<body>
-  <div id="app"></div>
+<head>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/spectre.css/0.5.1/spectre.min.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/spectre.css/0.5.1/spectre-icons.min.css">
+
+  <style>
+    h1 {
+      text-align: center;
+      margin: 40px 0;
+    }
+    .accordion .accordion-header {
+      color: inherit;
+      font-weight: 500;
+      font-size: 1.8em;
+      line-height: 1.2;
+      padding-top: 0.4rem;
+      padding-bottom: 0.4rem;
+    }
+    details.step {
+      border: 3px solid rgba(0, 0, 0, 0.7);
+      margin-bottom: 1em;
+    }
+    .step-status {
+      font-size: 0.6rem;
+      line-height: 2.8em;
+    }
+    .accordion .accordion-body {
+      margin: 1em 0 0 0;
+    }
+    pre {
+      margin: 0;
+    }
+    .code code {
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+    }
+    .build-result {
+      font-size: 1.8em;
+      text-align: center;
+    }
+    .build-result .reload {
+      font-size: 0.8em;
+    }
+  </style>
+</head>
+<body class="container grid-lg">
+  <div id="build" class="columns"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.1.0/socket.io.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/vue@2.5.16/dist/vue.js"></script>
 
   <script type="text/javascript">
-    const app = new Vue({
-      el: '#app',
+    Vue.component('build-step', {
+      props: {
+        name: { type: String, required: true },
+        logs: { type: Array, default: [] },
+        status: { type: String, default: '', required: true },
+      },
       template: `
-        <div>
-          <h1>Starting {{ host }}...</h1>
-          <div v-for="step in steps">
-            <h3>{{ step|capitalize }}</h3>
+        <details v-bind:class="{
+          accordion: true,
+          step: true,
+          'text-success': status === 'succeeded',
+          'text-error': status === 'failed',
+          'text-gray': status === 'running',
+        }">
+          <summary class="accordion-header c-hand">
+            <div class="container columns">
+              <div class="column col-8 col-mr-auto">
+                <i class="icon icon-arrow-right mr-1"></i>
+                {{ description }}...
+              </div>
+              <div class="step-status col-2">Status: {{ statusString }}</div>
+            </div>
+          </summary>
+          <div class="accordion-body">
+            <pre class="code step-logs "><code>{{ logs.join('') }}</code></pre>
           </div>
+        </details>
+      `,
+      computed: {
+        statusString: function () {
+          return this.status.charAt(0).toUpperCase() + this.status.slice(1).replace('_', ' ')
+        },
+        description: function () {
+          switch (this.name) {
+            case 'git.clone':    return 'Cloning repository';
+            case 'docker.build': return 'Building project';
+            case 'docker.start': return 'Starting project';
+            default:             throw new Error(`Unknown step "${this.name}".`);
+          }
+        },
+      },
+    });
+
+    new Vue({
+      el: '#build',
+      template: `
+        <div class="columns">
+          <h1 class="col-12">Starting {{ host }}...</h1>
+
+          <div id="build-steps" class="col-12">
+            <build-step
+              v-for="step of steps"
+              v-bind="step"
+            />
+          </div>
+
+          <p class="build-result text-error col-12" v-if="this.status === 'failed'">Build failed :-(</p>
+          <p class="build-result text-success col-12" v-if="this.status === 'succeeded'">
+            Build done :-)<br />
+            <span class="reload">
+              <a :href="host|http">Click here</a> to reload the page (or wait {{ reloadDelay }} seconds for automatic reload).
+            </span>
+          </p>
         </div>
       `,
       data: {
         host: window.location.hostname,
         steps: [],
+        finished: false,
+        reloadDelay: 3,
+        status: 'created',
       },
       created() {
-        const socket = io(`http://${this.host}`);
+        const tickReloader = () => {
+          if (--this.reloadDelay === 0) {
+            this.reloaderInterval = null;
+            window.location.reload(true);
+          }
+        };
+        const findStepById = (stepId) =>
+          this.steps.find((step) => step.id === stepId);
 
-        socket.on('build.new_step', (step) => {
+        const socket = io(`/${this.host}`);
+
+        socket.on('build', (build) => {
+          this.status = build.status;
+          this.steps.splice(0);
+          this.steps.push(...build.steps);
+        });
+
+        socket.on('build.step_started', (step) => {
           this.steps.push(step);
         });
 
-        // Just reload the page when the build is finished,
-        // so the proxy will start to do its job
-        socket.on('build.finished', () => {
-          window.location.reload(true);
+        // @TODO: Use a Maybe monad instead of that ugly ternary
+        socket.on('build.step_logs', ({ step: stepId, logs }) => {
+          const step = findStepById(stepId);
+
+          return step
+            ? step.logs.push(...logs)
+            : null;
+        });
+
+        // @TODO: Use a Maybe monad instead of that ugly ternary
+        socket.on('build.step_finished', ({ step: stepId, status }) => {
+            if (step = findStepById(stepId)) {
+              step.status = status
+            }
+        });
+
+        socket.on('build.finished', ({ status }) => {
+          this.finished = true;
+          this.status = status;
+          this.reloaderInterval = status === 'succeeded'
+            ? setInterval(tickReloader, 1000)
+            : null;
         });
       },
       filters: {
-        capitalize: (str) => str
-          ? str.charAt(0).toUpperCase() + str.slice(1)
-          : '',
+        http: (url) => `http://${url}`,
       }
     });
   </script>

@@ -25,6 +25,6 @@ export const createErrorTransformer = (transformers) => {
       ? transformers[err.constructor.name]
       : transformers['_'];
 
-    return transformer.call(null, err);
+    return transformer(err);
   };
 };
