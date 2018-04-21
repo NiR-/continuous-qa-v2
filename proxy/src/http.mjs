@@ -7,10 +7,12 @@ import * as executors from './executors';
 import fs from 'fs';
 import http from 'http';
 import httpProxy from 'http-proxy';
-import { createWsServer } from './ws';
 import _ from 'lodash';
+import format from 'string-template';
+import { createWsServer } from './ws';
 
-const waitPage = fs.readFileSync('./views/wait-page.html');
+const waitPage = fs.readFileSync('./views/wait-page.html').toString('utf8');
+const renderPage = (data) => format(waitPage, data)
 
 class InvalidHostname extends ExtendableError {
   constructor(hostname) {
@@ -79,12 +81,12 @@ const handleRequest = async (proxy, emitter, req, res) => {
   }
 
   // @TODO: use at least an in-memory store to avoid above issue
-  emitter.emit('build.created', {
-    build: createBuild(hostname, project, version)
-  });
+  const build = createBuild(hostname, project, version);
+  emitter.emit('build.created', { build });
 
+  const page = renderPage({ buildId: build.id });
   res.writeHead(201);
-  res.end(waitPage);
+  res.end(page);
 };
 
 const handleRequestError = (req, res, err) => {

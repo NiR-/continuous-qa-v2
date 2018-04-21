@@ -117,6 +117,7 @@
         </div>
       `,
       data: {
+        buildId: "{buildId}",
         host: window.location.hostname,
         steps: [],
         finished: false,
@@ -133,7 +134,7 @@
         const findStepById = (stepId) =>
           this.steps.find((step) => step.id === stepId);
 
-        const socket = io(`/${this.host}`);
+        const socket = io(`/${this.buildId}`);
 
         socket.on('build', (build) => {
           this.status = build.status;
