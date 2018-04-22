@@ -52,7 +52,7 @@ class ProxyBrdigeNotFound extends ExtendableError {
   }
 }
 
-const buildStack = async (client, logStep, build) => {
+const build = async (client, logStep, build) => {
   const cloneStep = findPlayedStep(build, 'git.clone');
 
   if (!cloneStep) {
@@ -98,7 +98,7 @@ const buildStack = async (client, logStep, build) => {
     );
 }
 
-const startStack = async (client, logStep, build) => {
+const start = async (client, logStep, build) => {
   const buildStep = findPlayedStep(build, 'docker.build')
 
   if (!buildStep) {
@@ -161,7 +161,7 @@ const connectToNetwork = (logStep, cid, network) => {
   return network.connect({ Container: cid });
 };
 
-const isStackUp = async (client, projectName, version) =>
+const isUp = async (client, projectName, version) =>
   await findContainer(client, projectName, version) !== undefined;
 
 // @TODO: put the result of this function into a cache for some seconds
@@ -181,7 +181,7 @@ const findContainer = async (client, projectName, version) => {
   ;
 };
 
-const getStackIpAddress = async (client, projectName, version) => {
+const getIpAddress = async (client, projectName, version) => {
   console.log(`Fetching ip address of "${projectName}", version "${version}"...`);
 
   const container = await findContainer(client, projectName, version);
@@ -320,10 +320,10 @@ const createDriver = () => {
   const client = new Docker({ socketPath });
 
   return {
-    isStackUp: _.partial(isStackUp, client),
-    buildStack: _.partial(buildStack, client),
-    startStack: _.partial(startStack, client),
-    getStackIpAddress: _.partial(getStackIpAddress, client),
+    isUp: _.partial(isUp, client),
+    build: _.partial(build, client),
+    start: _.partial(start, client),
+    getIpAddress: _.partial(getIpAddress, client),
     cleanup: async (state = STATE_STOPPED) => {
       if (!validateState(state)) {
         throw new InvalidState(state);
@@ -339,6 +339,6 @@ const createDriver = () => {
 export const driver = createDriver();
 export const cleanup = driver.cleanup;
 export const steps = {
-  'docker.build': driver.buildStack,
-  'docker.start': driver.startStack,
+  'docker.build': driver.build,
+  'docker.start': driver.start,
 };

@@ -89,7 +89,7 @@ const handleRequest = async (proxy, emitter, req, res) => {
   // @TODO: should detect if the build is still up at that point
   if (lastBuild.status === BUILD_STATUS.SUCCEEDED) {
     const driver = executors.driver(project.driver);
-    const stackIp = await driver.getStackIpAddress(projectName, version);
+    const stackIp = await driver.getIpAddress(projectName, version);
     return proxy.web(req, res, { target: `http://${stackIp}` });
   }
 
