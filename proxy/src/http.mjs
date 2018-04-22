@@ -77,7 +77,7 @@ const handleRequest = async (proxy, emitter, req, res) => {
   const project = await api.fetchProjectDetails(projectName);
   const lastBuild = await store.findLastBuild(projectName, version);
 
-  if (!lastBuild) {
+  if (!lastBuild || lastBuild.status === BUILD_STATUS.STOPPED) {
     const build = createBuild(hostname, project, version);
     emitter.emit('build.created', { build });
 
@@ -86,11 +86,20 @@ const handleRequest = async (proxy, emitter, req, res) => {
     return res.end(page);
   }
 
-  // @TODO: should detect if the build is still up at that point
   if (lastBuild.status === BUILD_STATUS.SUCCEEDED) {
     const driver = executors.driver(project.driver);
-    const stackIp = await driver.getIpAddress(projectName, version);
-    return proxy.web(req, res, { target: `http://${stackIp}` });
+
+    if (await driver.isUp(projectName, version)) {
+      const stackIp = await driver.getIpAddress(projectName, version);
+      return proxy.web(req, res, { target: `http://${stackIp}` });
+    }
+
+    lastBuild.status = BUILD_STATUS.STOPPED;
+    store.storeBuild(lastBuild);
+
+    res.writeHead(302, { Location: req.url });
+    res.end();
+    return;
   }
 
   const page = renderPage(lastBuild);

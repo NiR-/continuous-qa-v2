@@ -32,6 +32,7 @@ export const BUILD_STATUS = {
   RUNNING: 'running',
   SUCCEEDED: 'succeeded',
   FAILED: 'failed',
+  STOPPED: 'stopped',
 }
 
 export const STEP_STATUS = {
