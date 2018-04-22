@@ -40,9 +40,6 @@ const gitClone = (stepLogger, repoUrl, path) =>
 const gitCheckout = (stepLogger, path, version) =>
   exec(stepLogger, `cd ${path} && git checkout ${version}`)
 
-const logExec = (stepLogger, { stdout, stderr }) =>
-  stepLogger(...[].concat(stdout, stderr))
-
 export const cleanup = () => {
   console.log('Cleaning up git repositories...');
   return exec(console.log, 'rm -rf /tmp/cqa/*');

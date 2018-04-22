@@ -1,5 +1,5 @@
 import _ from 'lodash';
-import { createStep, hasFailedStep, BUILD_STATUS, STEP_STATUS, EVENTS } from './build';
+import { createStep, BUILD_STATUS, STEP_STATUS, EVENTS } from './build';
 
 export const onBuildCreated = async (emitter, runner, { build }) => {
   console.log(`New build created (id: "${build.id}", hostname: "${build.hostname}").`);
@@ -8,7 +8,7 @@ export const onBuildCreated = async (emitter, runner, { build }) => {
   build.status = BUILD_STATUS.RUNNING;
   build.status = await executeBuild(emitter, runner, build, 0);
 
-  emitter.emit(EVENTS.BUILD_FINISHED, { build });
+  emitter.emit(EVENTS.BUILD_FINISHED, { build });
 }
 
 const executeBuild = async (emitter, runner, build, stepId) => {

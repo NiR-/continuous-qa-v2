@@ -51,6 +51,11 @@
   <script src="https://cdn.jsdelivr.net/npm/vue@2.5.16/dist/vue.js"></script>
 
   <script type="text/javascript">
+    window.BUILD_ID = "{buildId}";
+    window.BUILD_STEPS = {buildSteps};
+    window.BUILD_STATUS = "{buildStatus}";
+  </script>
+  <script type="text/javascript">
     Vue.component('build-step', {
       props: {
         name: { type: String, required: true },
@@ -117,12 +122,12 @@
         </div>
       `,
       data: {
-        buildId: "{buildId}",
+        buildId: window.BUILD_ID,
         host: window.location.hostname,
-        steps: [],
+        steps: window.BUILD_STEPS || [],
         finished: false,
         reloadDelay: 3,
-        status: 'created',
+        status: window.BUILD_STATUS || 'created',
       },
       created() {
         const tickReloader = () => {
@@ -155,7 +160,7 @@
             : null;
         });
 
-        // @TODO: Use a Maybe monad instead of that ugly ternary
+        // @TODO: Use a Maybe monad instead of that ugly condition
         socket.on('build.step_finished', ({ step: stepId, status }) => {
             if (step = findStepById(stepId)) {
               step.status = status

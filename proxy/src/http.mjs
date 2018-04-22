@@ -1,18 +1,24 @@
 import { default as api, ProjectNotFound } from './api';
-import { EVENTS, createBuild } from './build';
+import { EVENTS, createBuild, BUILD_STATUS } from './build';
 import { onBuildCreated, onBuildFinished, runStep, logStep } from './build-workflow';
 import { ExtendableError, createErrorTransformer } from './errors';
 import EventEmitter from 'events';
 import * as executors from './executors';
+import store from './datastore';
 import fs from 'fs';
 import http from 'http';
 import httpProxy from 'http-proxy';
 import _ from 'lodash';
 import format from 'string-template';
 import { createWsServer } from './ws';
+import { sanitizeStep } from './utils';
 
-const waitPage = fs.readFileSync('./views/wait-page.html').toString('utf8');
-const renderPage = (data) => format(waitPage, data)
+const waitPage = fs.readFileSync('./views/wait-page.html').toString('utf8')
+const renderPage = ({ id, steps, status }) => format(waitPage, {
+  buildId: id,
+  buildSteps: JSON.stringify(steps.map(sanitizeStep)),
+  buildStatus: status,
+})
 
 class InvalidHostname extends ExtendableError {
   constructor(hostname) {
@@ -53,39 +59,42 @@ const handleRequest = async (proxy, emitter, req, res) => {
   if (['127.0.0.1', '::ffff:127.0.0.1'].indexOf(req.socket.remoteAddress) !== -1) {
     console.error('Request from local IP address detected and dropped (this could cause infinite loop).');
     res.writeHead(400);
-    res.end();
-    return;
+    return res.end();
   }
   // @TODO: Expose prometheus metrics on /metrics (and with no host)
   if (!req.headers.host) {
     res.writeHead(400);
-    res.end('Missing Host header.');
-    return;
+    return res.end('Missing Host header.');
+  }
+
+  if (['/robots.txt', '/favicon.ico'].indexOf(req.url) !== -1) {
+    res.writeHead(404);
+    return res.end();
   }
 
   const hostname = req.headers.host;
   const { projectName, version } = splitHostname(hostname);
   const project = await api.fetchProjectDetails(projectName);
-  const driver = executors.driver(project.driver);
+  const lastBuild = await store.findLastBuild(projectName, version);
 
-  // @TODO: race condition here: this isn't sufficient, bc a build can be in progress
-  if (await driver.isStackUp(projectName, version)) {
+  if (!lastBuild) {
+    const build = createBuild(hostname, project, version);
+    emitter.emit('build.created', { build });
+
+    const page = renderPage(build);
+    res.writeHead(201);
+    return res.end(page);
+  }
+
+  // @TODO: should detect if the build is still up at that point
+  if (lastBuild.status === BUILD_STATUS.SUCCEEDED) {
+    const driver = executors.driver(project.driver);
     const stackIp = await driver.getStackIpAddress(projectName, version);
     return proxy.web(req, res, { target: `http://${stackIp}` });
   }
 
-  if (['/robots.txt', '/favicon.ico'].indexOf(req.url) !== -1) {
-    res.writeHead(404);
-    res.end();
-    return;
-  }
-
-  // @TODO: use at least an in-memory store to avoid above issue
-  const build = createBuild(hostname, project, version);
-  emitter.emit('build.created', { build });
-
-  const page = renderPage({ buildId: build.id });
-  res.writeHead(201);
+  const page = renderPage(lastBuild);
+  res.writeHead(200);
   res.end(page);
 };
 
@@ -125,7 +134,12 @@ const bindWorkflowEvents = (emitter) => {
   const stepLogger = _.partial(logStep, emitter);
   const stepRunner = _.partial(runStep, emitter, stepLogger, executors.steps);
 
-  emitter.on(EVENTS.BUILD_CREATED, _.partial(onBuildCreated, emitter,stepRunner));
+  emitter.on(EVENTS.BUILD_CREATED, ({ build }) => store.storeBuild(build));
+  emitter.on(EVENTS.STEP_STARTED, ({ build }) => store.storeBuild(build));
+  emitter.on(EVENTS.STEP_FINISHED, ({ build }) => store.storeBuild(build));
+  emitter.on(EVENTS.BUILD_FINISHED, ({ build }) => store.storeBuild(build));
+
+  emitter.on(EVENTS.BUILD_CREATED, _.partial(onBuildCreated, emitter, stepRunner));
   emitter.on(EVENTS.BUILD_FINISHED, onBuildFinished);
 };
 
@@ -136,8 +150,8 @@ const createServer = () => {
     handleRequest(proxy, emitter, req, res)
       .catch(handleRequestError.bind(null, req, res))
   );
-  const wsServer = createWsServer(server, emitter);
 
+  createWsServer(server, emitter);
   bindWorkflowEvents(emitter);
 
   return server;
