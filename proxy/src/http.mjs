@@ -73,7 +73,7 @@ const handleRequest = async (proxy, emitter, req, res) => {
   }
 
   const hostname = req.headers.host;
-  const { projectName, version } = splitHostname(hostname);
+  const { projectName, version } = splitHostname('cqa', hostname);
   const project = await api.fetchProjectDetails(projectName);
   const lastBuild = await store.findLastBuild(projectName, version);
 
@@ -118,10 +118,15 @@ const handleRequestError = (req, res, err) => {
   res.end(httpError.message);
 };
 
+const normalizeSlash = (str) => str.replace(/--slash--/g, '/')
+const normalizeDot = (str) => str.replace(/--dot(--|$)/g, '.')
+const normalizeTrailingHyphen = (str) => str.replace(/--hyphen$/, '-')
+
 // @TODO: use a LRU cache and limit the number of hostname cached
 // or server would presumably be vulnerable to memory exhaution attacks
-const splitHostname = _.memoize((hostname) => {
-  const splits = hostname.split(/^([^\.]*)\.([^\.]*)\.([^\.]*)\.cqa$/);
+export const splitHostname = (baseDomain, hostname) => {
+  const splits = hostname.split(
+    new RegExp(`^([^\.]*)\.([^\.]*)\.([^\.]*)\.${baseDomain.replace('.', '\.')}$`));
 
   if (splits.length === 1) {
     throw new InvalidHostname(hostname);
@@ -130,14 +135,19 @@ const splitHostname = _.memoize((hostname) => {
   // Period characters might appear in user/project names but would introduce a new level to the FQDN,
   // and trailing hyphen is forbidden by DNS-related RFCs, thus they're respectively replaced by: "__" and "-hyphen".
   // @TODO: properly implement DNS RFCs
-  const user = splits[3].replace('__', '.').replace(/\-hyphen$/, '-');
-  const project = splits[2].replace('__', '.').replace(/\-hyphen$/, '-');
+  const version = normalizeDot(
+    normalizeTrailingHyphen(
+      normalizeSlash(splits[1])));
+  const user = normalizeDot(
+    normalizeTrailingHyphen(splits[3]));
+  const project = normalizeDot(
+    normalizeTrailingHyphen(splits[2]));
 
   return {
     projectName: `${user}/${project}`,
-    version: splits[1],
+    version: version,
   };
-});
+};
 
 const bindWorkflowEvents = (emitter) => {
   const stepLogger = _.partial(logStep, emitter);

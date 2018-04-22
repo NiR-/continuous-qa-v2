@@ -25,8 +25,9 @@ const buildLabels = (projectName, version) => {
 };
 const stringifyLabel = (val, key) => `${key}=${val}`;
 const buildLabelFilters = (labels) => _.map(labels, stringifyLabel);
-const normalizeImageTag = (tag) => tag.replace(/\-\//, '/').replace(/\-$/, '');
-const imageTag = (build) => normalizeImageTag(`${build.project.name}:${build.version}`);
+const normalizeImage = (image) => image.replace(/\-\//g, '/');
+const normalizeTag = (tag) => tag.replace('/', '-');
+const imageTag = (build) => `${normalizeImage(build.project.name)}:${normalizeTag(build.version)}`;
 
 export class BuildFailed extends ExtendableError {
   constructor(buildName, previous) {
