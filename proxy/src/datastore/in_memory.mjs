@@ -1,5 +1,7 @@
 import findLast from 'lodash/findLast';
+import monet from 'monet';
 
+const { Maybe } = monet;
 const store = {};
 
 const getLastBuild = (projectName, version) => {
@@ -24,3 +26,15 @@ export const storeBuild = (build) => {
 
   store[project.name][version][id] = build;
 }
+
+const accessTimes = {};
+
+export const storeLastAccessTime = (build, time) => {
+  accessTimes[build.id] = time;
+}
+
+export const getLastAccessTime = (build) => new Promise((resolve, reject) => {
+  return resolve(build.id in accessTimes
+    ? Maybe.Some(accessTimes[build.id])
+    : Maybe.None());
+});

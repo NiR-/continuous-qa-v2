@@ -91,7 +91,9 @@ const handleRequest = async (proxy, emitter, req, res) => {
 
     if (await driver.isUp(projectName, version)) {
       const stackIp = await driver.getIpAddress(projectName, version);
-      return proxy.web(req, res, { target: `http://${stackIp}` });
+      proxy.web(req, res, { target: `http://${stackIp}` });
+      store.storeLastAccessTime(lastBuild, new Date());
+      return;
     }
 
     lastBuild.status = BUILD_STATUS.STOPPED;

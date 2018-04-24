@@ -225,6 +225,11 @@ const getNetworkLabels = async (client, networkId) => {
   return inspect.Labels;
 };
 
+const stop = async (client, build) =>
+  findContainer(client, build.project.name, build.version)
+    .then(({ Id }) => client.getContainer(Id))
+    .then((c) => c.stop())
+
 const stateToStatusFilter = (state) => {
   switch (state) {
     case STATE_ALL: return ['created', 'restarting', 'running', 'removing', 'paused', 'exited', 'dead'];
@@ -299,16 +304,12 @@ const disconnectContainer = (network, containerId) => {
 const cleanupImages = async (client, state) => {
   console.log('Cleaning up images...');
   // listImages() returns an array of POJO but not Image instances...
-  const images = await client.listImages({
-    filters: { label: [LABEL_CQA] },
-  });
-
-  await Promise.all(images
-    // thus we've to instantiate them first,
-    .map((image) => client.getImage(image.Id))
-    // before delete.
-    .map(_.partialRight(removeImage, state === STATE_ALL))
-  );
+  return client
+    .listImages({ filters: { label: [LABEL_CQA] } })
+    .then((images) => Promise.all(images
+      .map(({ Id }) => client.getImage(Id))
+      .map((image) => removeImage(image, state === STATE_ALL))
+    ));
 };
 
 const removeImage = (image, force) => {
@@ -324,6 +325,7 @@ const createDriver = () => {
     isUp: _.partial(isUp, client),
     build: _.partial(build, client),
     start: _.partial(start, client),
+    stop: _.partial(stop, client),
     getIpAddress: _.partial(getIpAddress, client),
     cleanup: async (state = STATE_STOPPED) => {
       if (!validateState(state)) {

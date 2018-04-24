@@ -17,3 +17,6 @@ export const sanitizeStep = ({ id, name, logs, status }) => {
     status,
   }
 }
+
+// Does nothing, but adds meanings to values
+Number.seconds = (val) => val * 1000

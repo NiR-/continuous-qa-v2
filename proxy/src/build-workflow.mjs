@@ -1,5 +1,10 @@
-import _ from 'lodash';
 import { createStep, BUILD_STATUS, STEP_STATUS, EVENTS } from './build';
+import store from './datastore';
+import * as executors from './executors';
+import _ from 'lodash';
+import monet from 'monet';
+
+const { Either } = monet;
 
 export const onBuildCreated = async (emitter, runner, { build }) => {
   console.log(`New build created (id: "${build.id}", hostname: "${build.hostname}").`);
@@ -32,7 +37,40 @@ const executeBuild = async (emitter, runner, build, stepId) => {
 
 export const onBuildFinished = ({ build }) => {
   console.log(`Build finished (id: "${build.id}", hostname: "${build.hostname}").`)
+
+  if (build.status === BUILD_STATUS.SUCCEEDED) {
+    scheduleTearDown(build, Number.seconds(10));
+  }
 }
+
+const scheduleTearDown = (build, lastVisitDelay) => {
+  const onTimeout = async () => {
+    tearDownStaleBuild(build, lastVisitDelay)
+      .then((delta) =>
+        tearDownTimer = delta.cata(
+          (delta) => {
+            console.log(`Reschedule tear down for build "${build.id}" in ${delta}ms.`)
+            return setTimeout(onTimeout, delta)
+          },
+          () => {
+            console.log(`Build "${build.id}" has been teared down.`)
+            return null
+          }
+        )
+      )
+  };
+
+  let tearDownTimer = setTimeout(onTimeout, lastVisitDelay);
+}
+
+const tearDownStaleBuild = (build, lastVisitDelay) =>
+  store
+    .getLastAccessTime(build)
+    .then((lastAccess) => new Date() - lastAccess.orSome(0))
+    .then((delta) => delta < lastVisitDelay
+      ? Either.Left(delta)
+      : Either.Right(executors.driver(build.project.driver).stop(build))
+    )
 
 export const runStep = async (emitter, stepLogger, executors, { stepName, build }) => {
   if (!(stepName in executors)) {
