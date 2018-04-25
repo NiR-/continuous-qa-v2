@@ -1,6 +1,6 @@
 import { default as api, ProjectNotFound } from './api';
 import { EVENTS, createBuild, BUILD_STATUS } from './build';
-import { onBuildCreated, onBuildFinished, runStep, logStep } from './build-workflow';
+import * as workflow from './build-workflow';
 import { ExtendableError, createErrorTransformer } from './errors';
 import EventEmitter from 'events';
 import * as executors from './executors';
@@ -152,16 +152,23 @@ export const splitHostname = (baseDomain, hostname) => {
 };
 
 const bindWorkflowEvents = (emitter) => {
-  const stepLogger = _.partial(logStep, emitter);
-  const stepRunner = _.partial(runStep, emitter, stepLogger, executors.steps);
-
   emitter.on(EVENTS.BUILD_CREATED, ({ build }) => store.storeBuild(build));
   emitter.on(EVENTS.STEP_STARTED, ({ build }) => store.storeBuild(build));
   emitter.on(EVENTS.STEP_FINISHED, ({ build }) => store.storeBuild(build));
   emitter.on(EVENTS.BUILD_FINISHED, ({ build }) => store.storeBuild(build));
 
-  emitter.on(EVENTS.BUILD_CREATED, _.partial(onBuildCreated, emitter, stepRunner));
-  emitter.on(EVENTS.BUILD_FINISHED, onBuildFinished);
+  const stepLogger = _.partial(workflow.logStep, emitter);
+  const stepRunner = _.partial(workflow.runStep, emitter, stepLogger, executors.steps);
+
+  emitter.on(EVENTS.BUILD_CREATED,
+    _.partial(workflow.onBuildCreated, emitter, stepRunner));
+
+  const scheduleStore = {};
+  const onScheduleTimeout =
+  _.partial(workflow.onScheduleTimeout, scheduleStore, emitter);
+  const scheduler =
+  _.partial(workflow.rescheduleTearDown, scheduleStore, onScheduleTimeout);
+  emitter.on(EVENTS.BUILD_FINISHED, _.partial(workflow.onBuildFinished, scheduler));
 };
 
 const createServer = () => {

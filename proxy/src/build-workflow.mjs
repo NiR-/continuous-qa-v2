@@ -33,44 +33,7 @@ const executeBuild = async (emitter, runner, build, stepId) => {
   return step.status === STEP_STATUS.SUCCEEDED
     ? await executeBuild(emitter, runner, build, stepId+1)
     : BUILD_STATUS.FAILED;
-};
-
-export const onBuildFinished = ({ build }) => {
-  console.log(`Build finished (id: "${build.id}", hostname: "${build.hostname}").`)
-
-  if (build.status === BUILD_STATUS.SUCCEEDED) {
-    scheduleTearDown(build, Number.seconds(10));
-  }
 }
-
-const scheduleTearDown = (build, lastVisitDelay) => {
-  const onTimeout = async () => {
-    tearDownStaleBuild(build, lastVisitDelay)
-      .then((delta) =>
-        tearDownTimer = delta.cata(
-          (delta) => {
-            console.log(`Reschedule tear down for build "${build.id}" in ${delta}ms.`)
-            return setTimeout(onTimeout, delta)
-          },
-          () => {
-            console.log(`Build "${build.id}" has been teared down.`)
-            return null
-          }
-        )
-      )
-  };
-
-  let tearDownTimer = setTimeout(onTimeout, lastVisitDelay);
-}
-
-const tearDownStaleBuild = (build, lastVisitDelay) =>
-  store
-    .getLastAccessTime(build)
-    .then((lastAccess) => new Date() - lastAccess.orSome(0))
-    .then((delta) => delta < lastVisitDelay
-      ? Either.Left(delta)
-      : Either.Right(executors.driver(build.project.driver).stop(build))
-    )
 
 export const runStep = async (emitter, stepLogger, executors, { stepName, build }) => {
   if (!(stepName in executors)) {
@@ -103,3 +66,39 @@ export const logStep = (emitter, build, step, ...logs) => {
   console.log(`[${build.id}] [${step.name}]:`, ...logs);
   emitter.emit('build.step_logs', { build, step, logs })
 }
+
+export const onBuildFinished = (tearDownScheduler, { build }) => {
+  console.log(`Build finished (id: "${build.id}", hostname: "${build.hostname}").`)
+
+  if (build.status === BUILD_STATUS.SUCCEEDED) {
+    tearDownScheduler(build, Number.minutes(5));
+  }
+}
+
+export const rescheduleTearDown = (scheduleStore, onTimeout, build, delayNext) => {
+  console.log(`Reschedule tear down for build "${build.id}" in ${delayNext}ms.`)
+
+  scheduleStore[build.id] = setTimeout(onTimeout, delayNext);
+}
+
+export const onScheduleTimeout = async (scheduleStore, emitter, build, lastVisitDelay) =>
+  (await tearDownStaleBuild(emitter, build, lastVisitDelay))
+    .cata(
+      (delta) => rescheduleTearDown(scheduleStore, build, lastVisitDelay, delta),
+      () =>  null
+    )
+
+const tearDownStaleBuild = (emitter, build, lastVisitDelay) => store
+  .getLastAccessTime(build)
+  .then((lastAccess) => new Date() - lastAccess.orSome(0))
+  .then(async (delta) => delta < lastVisitDelay
+    ? Either.Left(lastVisitDelay - delta)
+    : Either.Right(await tearDown(emitter, build))
+  )
+
+const tearDown = (emitter, build) => executors
+  .driver(build.project.driver)
+  .stop(build)
+  .then(() => build.status = BUILD_STATUS.STOPPED)
+  .then((build) => emitter.emit(EVENTS.BUILD_FINISHED, { build }))
+  .then(() => console.log(`Build "${build.id}" has been teared down.`))
