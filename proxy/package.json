@@ -1,9 +1,13 @@
 {
   "dependencies": {
     "dockerode": "^2.5.4",
+    "fluture": "^8.0.2",
+    "fluture-sanctuary-types": "^2.0.0",
     "http-proxy": "^1.16.2",
+    "immutable": "^3.8.2",
     "lodash": "^4.17.5",
     "monet": "^0.8.10",
+    "sanctuary": "^0.14.1",
     "socket.io": "^2.1.0",
     "string-template": "^1.0.0",
     "uuid": "^3.2.1"
@@ -14,7 +18,8 @@
     "eslint-config-google": "^0.9.1",
     "esm": "^3.0.22",
     "mocha": "^5.1.1",
-    "nodemon": "^1.17.3"
+    "nodemon": "^1.17.3",
+    "sinon": "^5.0.3"
   },
   "scripts": {
     "dev": "nodemon -w bin/ -w src/ -w views -e js,mjs,html -x 'npm run server'",
@@ -23,6 +28,7 @@
     "clean": "npm run cleanup",
     "clean-all": "npm run cleanup ALL",
     "lint": "eslint --ext mjs src/",
-    "test": "mocha -r esm tests/unit/**/*.js"
+    "test:unit": "mocha -r esm tests/unit/**/*.js",
+    "test:integration": "mocha -r esm tests/integration/**/*.js"
   }
 }

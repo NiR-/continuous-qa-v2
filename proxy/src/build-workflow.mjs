@@ -1,71 +1,89 @@
-import { createStep, BUILD_STATUS, STEP_STATUS, EVENTS } from './build';
-import store from './datastore';
-import * as executors from './executors';
+import S from './prelude';
+import Future from 'fluture';
+import { preserve, maybeToFuture } from './utils'
+import { createStep, updateBuildStatus, BUILD_STATUS, STEP_STATUS, EVENTS } from './build';
 import _ from 'lodash';
-import monet from 'monet';
 
-const { Either } = monet;
+/**
+ * @param {function} logger
+ * @param {Build}    build
+ */
+const logNewBuildCreated = S.curry2((logger, build) =>
+  logger(`New build created (id: "${build.id}", hostname: "${build.hostname}").`)
+)
 
-export const onBuildCreated = async (emitter, runner, { build }) => {
-  console.log(`New build created (id: "${build.id}", hostname: "${build.hostname}").`);
+/**
+ * @param {function} logger
+ * @param {function} storeBuid
+ * @param {function} executeBuild
+ * @param {object}
+ * @return {Future}
+ */
+export const onBuildCreated = S.curry4((logger, storeBuild, executeBuild, { build }) =>
+  Future.of(build)
+  .map(build => S.K(build, logNewBuildCreated(logger, build)))
+  .map(build => updateBuildStatus(BUILD_STATUS.RUNNING, build))
+  .map(build => S.K(build, storeBuild(build)))
+  .chain(build =>
+    executeBuild(build)
+    .map(build => updateBuildStatus(BUILD_STATUS.SUCCEEDED, build))
+    .map(build => S.K(build, storeBuild(build)))
+  )
+  /** .bimap(
+    build => emitter.emit(EVENTS.BUILD_FINISHED, { build }),
+    build => emitter.emit(EVENTS.BUILD_FINISHED, { build }),
+  ) */
+)
 
-  // @TODO: that block of code makes no sense right now
-  build.status = BUILD_STATUS.RUNNING;
-  build.status = await executeBuild(emitter, runner, build, 0);
+export const executeBuild = S.curry3((storeBuild, runStep, build) =>
+  S.reduce(S.curry2((build, stepName) =>
+    build.chain(build =>
+      Future.of(createStep(stepName))
+      .map(step => ({ step, build: addStepToBuild(build, step) }))
+      .map(({ build, step }) => S.K({ build, step }, storeBuild(build)))
+      .chain(({ build, step }) =>
+        runStep({ build, step })
+        .bimap(
+          err => S.K(err, S.K(
+            updateBuildStatus(BUILD_STATUS.FAILED, build),
+            storeBuild(build)
+          )),
+          step => S.K(build, storeBuild(build)),
+        )
+      )
+    )
+  ), Future.of(build), build.project.steps)
+)
 
-  emitter.emit(EVENTS.BUILD_FINISHED, { build });
-}
+const logStepStarting = S.curry2((build, step) => console.log(`Starting step "${step.name}" for build "${build.id}".`))
 
-const executeBuild = async (emitter, runner, build, stepId) => {
-  if (stepId === build.project.steps.length) {
-    return BUILD_STATUS.SUCCEEDED;
-  }
+/**
+ * @param {function}     stepLogger
+ * @param {function}     findExecutor
+ * @param {object}
+ * @return {Future<Build>}
+ */
+export const runStep = S.curry3((stepLogger, findExecutor, { build, step }) =>
+  maybeToFuture(
+    new Error(`No executor found for step "${step.name}".`),
+    findExecutor(step.name)
+  )
+  .map(executor => S.K(executor, logStepStarting(build, step)))
+  // .map(executor => S.K(executor, emitter.emit('build.step_started', { build, step })))
+  .map(executor => executor(stepLogger, build, step))
+  .map(output => updateStepOutput(step, output))
+  .map(step => updateStepStatus(step, STEP_STATUS.SUCEEDED))
+  .mapRej(err => S.K(err, console.error(err)))
+  .mapRej(err => S.K(err, updateStepStatus(step, STEP_STATUS.FAILED)))
+  // .map(step => S.K(step, emitter.emit('build.step_finished', { build, step })))
+)
 
-  const stepName = build.project.steps[stepId];
+export const logStep = S.curry3((build, step, log) => {
+  step.logs.push(log);
 
-  // @TODO: should not throw an error, but use a monad instead
-  if (stepName === null) {
-    throw new Error(`Step ${stepId} not found in build "${build.id}".`);
-  }
-
-  const step = await runner({ stepName, build });
-
-  return step.status === STEP_STATUS.SUCCEEDED
-    ? await executeBuild(emitter, runner, build, stepId+1)
-    : BUILD_STATUS.FAILED;
-}
-
-export const runStep = async (emitter, stepLogger, executors, { stepName, build }) => {
-  if (!(stepName in executors)) {
-    throw new Error(`Step "${stepName}" not found.`);
-  }
-
-  const executor = executors[stepName];
-  const step = createStep(stepName);
-  build.steps.push(step);
-
-  emitter.emit('build.step_started', { build, step });
-  console.log(`Starting step "${step.name}" for build "${build.id}".`);
-
-  try {
-    step.out = await executor(_.partial(stepLogger, build, step), build);
-    step.status = STEP_STATUS.SUCCEEDED;
-  } catch (err) {
-    console.log(err);
-    step.status = STEP_STATUS.FAILED;
-  }
-
-  emitter.emit('build.step_finished', { build, step });
-
-  return step;
-}
-
-export const logStep = (emitter, build, step, ...logs) => {
-  step.logs.push(...logs);
-
-  console.log(`[${build.id}] [${step.name}]:`, ...logs);
-  emitter.emit('build.step_logs', { build, step, logs })
-}
+  console.log(`[${build.id}] [${step.name}]:`, log);
+  // emitter.emit('build.step_logs', { build, step, log })
+})
 
 export const onBuildFinished = (tearDownScheduler, { build }) => {
   console.log(`Build finished (id: "${build.id}", hostname: "${build.hostname}").`)
@@ -81,8 +99,14 @@ export const rescheduleTearDown = (scheduleStore, onTimeout, build, delayNext) =
   scheduleStore[build.id] = setTimeout(onTimeout, delayNext);
 }
 
-export const onScheduleTimeout = async (scheduleStore, emitter, build, lastVisitDelay) =>
-  (await tearDownStaleBuild(emitter, build, lastVisitDelay))
+export const onScheduleTimeout = (store, scheduleStore, emitter, build, lastVisitDelay) =>
+  store
+    .getLastAccessTime(build)
+    .then((lastAccess) => new Date() - lastAccess.orSome(0))
+    .then(async (delta) => delta < lastVisitDelay
+      ? S.Left(lastVisitDelay - delta)
+      : S.Right(await tearDown(emitter, build))
+    )
     .cata(
       (delta) => rescheduleTearDown(scheduleStore, build, lastVisitDelay, delta),
       () =>  null

@@ -1,10 +1,8 @@
 import io from 'socket.io';
 import { EVENTS } from './build';
 import _ from 'lodash';
-import monet from 'monet';
 import { sanitizeBuild, sanitizeStep } from './utils';
-
-const { Maybe } = monet;
+import S from 'sanctuary';
 
 export const createWsServer = (httpServer, emitter) => {
   const server = io(httpServer);
@@ -16,35 +14,36 @@ export const createWsServer = (httpServer, emitter) => {
   emitter.on(EVENTS.BUILD_FINISHED, _.partial(onBuildFinished, server));
 }
 
-const onBuildCreated = (server, { build }) => {
+const onBuildCreated = (server, { build }) =>
   // @TODO: Add an authentication mechanism to not leak build details to anyone
   server
-    .of(`/${build.id}`)
-    .on('connection', onConnection.bind(null, build))
-}
+  .of(`/${build.id}`)
+  .on('connection', onConnection.bind(null, build))
 
-const onConnection = (build, socket) => {
-  console.log(`New connection to the websocket established (build: ${build.id}, host: ${build.hostname}).`);
-  socket.emit('build', sanitizeBuild(build));
-}
+const logNewConnection = _ => console.log(`New connection to the websocket established (build: ${build.id}, host: ${build.hostname}).`);
+
+const onConnection = (build) => S.pipe([
+  logNewConnection,
+  _ => socket.emit('build', sanitizeBuild(build)),
+], build)
 
 const onStepStarted = (server, { build, step }) =>
   nsp(server, build)
-    .map((nsp) => nsp.emit(EVENTS.STEP_STARTED, sanitizeStep(step)))
+  .map((nsp) => nsp.emit(EVENTS.STEP_STARTED, sanitizeStep(step)))
 
 const onStepLogs = (server, { build, step, logs }) =>
   nsp(server, build)
-    .map((nsp) => nsp.emit(EVENTS.STEP_LOGS, { step: step.id, logs }))
+  .map((nsp) => nsp.emit(EVENTS.STEP_LOGS, { step: step.id, logs }))
 
 const onStepFinished = (server, { build, step }) =>
   nsp(server, build)
-    .map((nsp) => nsp.emit(EVENTS.STEP_FINISHED, { step: step.id, status: step.status }))
+  .map((nsp) => nsp.emit(EVENTS.STEP_FINISHED, { step: step.id, status: step.status }))
 
 const onBuildFinished = (server, { build }) =>
   nsp(server, build)
-    .map((nsp) => nsp.emit(EVENTS.BUILD_FINISHED, { status: build.status }))
-    .map(() => delete server.nsps[`/${build.id}`])
+  .map((nsp) => nsp.emit(EVENTS.BUILD_FINISHED, { status: build.status }))
+  .map(() => delete server.nsps[`/${build.id}`])
 
 const nsp = (server, build) => `/${build.id}` in server.nsps
-  ? Maybe.Some(server.nsps[`/${build.id}`])
-  : Maybe.None()
+  ? S.Just(server.nsps[`/${build.id}`])
+  : S.Nothing()

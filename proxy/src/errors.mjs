@@ -1,3 +1,5 @@
+import S from 'sanctuary';
+
 export class ExtendableError extends Error {
   constructor(message = '', previous = null) {
     super(message);
@@ -15,16 +17,18 @@ export class ExtendableError extends Error {
   }
 }
 
-export const createErrorTransformer = (transformers) => {
-  if (!('_' in transformers)) {
-    throw new Error('Default pattern "_" not bound, please define it.');
-  }
+const hasPattern = (transformers, pattern) => pattern in transformers
 
-  return (err) => {
-    const transformer = err.constructor.name in transformers
-      ? transformers[err.constructor.name]
-      : transformers['_'];
+const getTransformer = (transformers, pattern) => S.toMaybe(transformers[pattern])
 
-    return transformer(err);
-  };
-};
+const getTransformerOrDefault = S.curry2((transformers, err) =>
+  hasPattern(transformers, err.constructor.name)
+  ? getTransformer(transformers, err.constructor.name)
+  : getTransformer(transformers, '_')
+)
+
+export const transformError = S.curry2((transformers, err) => {
+  const transformer = getTransformerOrDefault(transformers, err)
+
+  return transformer(err)
+})

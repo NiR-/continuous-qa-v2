@@ -1,14 +1,15 @@
+import S from './prelude';
+import Future from 'fluture';
 import { default as api, ProjectNotFound } from './api';
 import { EVENTS, createBuild, BUILD_STATUS } from './build';
 import * as workflow from './build-workflow';
-import { ExtendableError, createErrorTransformer } from './errors';
+import { ExtendableError, transformError } from './errors';
 import EventEmitter from 'events';
 import * as executors from './executors';
 import store from './datastore';
 import fs from 'fs';
 import http from 'http';
 import httpProxy from 'http-proxy';
-import _ from 'lodash';
 import format from 'string-template';
 import { createWsServer } from './ws';
 import { sanitizeStep } from './utils';
@@ -47,11 +48,11 @@ class HttpServerError extends HttpError {
   }
 }
 
-const transformToHttpErrors = createErrorTransformer({
+const transformToHttpErrors = transformError({
   InvalidHostname: () => new HttpClientError(400, 'Invalid hostname format.'),
   ProjectNotFound: () => new HttpClientError(404, 'Project not found.'),
   _: (err) => new HttpServerError(500, err),
-});
+})
 
 const handleRequest = async (proxy, emitter, req, res) => {
   console.log(`New request received (host: ${req.headers.host}, method: ${req.method}, url: ${req.url}, remote: ${req.socket.remoteAddress}).`);
@@ -120,9 +121,27 @@ const handleRequestError = (req, res, err) => {
   res.end(httpError.message);
 };
 
-const normalizeSlash = (str) => str.replace(/--slash--/g, '/')
-const normalizeDot = (str) => str.replace(/--dot(--|$)/g, '.')
-const normalizeTrailingHyphen = (str) => str.replace(/--hyphen$/, '-')
+const replace = S.curry3((pattern, rep, str) => str.replace(pattern, rep))
+
+const dehyphenateSlash = replace(/--slash--/g, '/')
+const dehyphenateDot = replace(/--dot(--|$)/g, '.')
+const dehyphenateTrailingHyphen = replace(/--hyphen$/, '-')
+
+const normalizeVersion = S.pipe([
+  dehyphenateSlash,
+  dehyphenateTrailingHyphen,
+  dehyphenateDot,
+])
+
+const normalizeUser = S.pipe([
+  dehyphenateTrailingHyphen,
+  dehyphenateDot,
+])
+
+const normalizeProject = S.pipe([
+  dehyphenateTrailingHyphen,
+  dehyphenateDot,
+])
 
 // @TODO: use a LRU cache and limit the number of hostname cached
 // or server would presumably be vulnerable to memory exhaution attacks
@@ -137,13 +156,9 @@ export const splitHostname = (baseDomain, hostname) => {
   // Period characters might appear in user/project names but would introduce a new level to the FQDN,
   // and trailing hyphen is forbidden by DNS-related RFCs, thus they're respectively replaced by: "__" and "-hyphen".
   // @TODO: properly implement DNS RFCs
-  const version = normalizeDot(
-    normalizeTrailingHyphen(
-      normalizeSlash(splits[1])));
-  const user = normalizeDot(
-    normalizeTrailingHyphen(splits[3]));
-  const project = normalizeDot(
-    normalizeTrailingHyphen(splits[2]));
+  const version = normalizeVersion(splits[1]);
+  const user = normalizeUser(splits[3]);
+  const project = normalizeProject(splits[2]);
 
   return {
     projectName: `${user}/${project}`,
@@ -157,18 +172,16 @@ const bindWorkflowEvents = (emitter) => {
   emitter.on(EVENTS.STEP_FINISHED, ({ build }) => store.storeBuild(build));
   emitter.on(EVENTS.BUILD_FINISHED, ({ build }) => store.storeBuild(build));
 
-  const stepLogger = _.partial(workflow.logStep, emitter);
-  const stepRunner = _.partial(workflow.runStep, emitter, stepLogger, executors.steps);
+  const stepLogger = workflow.logStep(emitter);
+  const stepRunner = workflow.runStep(emitter, stepLogger, executors.steps);
 
-  emitter.on(EVENTS.BUILD_CREATED,
-    _.partial(workflow.onBuildCreated, emitter, stepRunner));
+  emitter.on(EVENTS.BUILD_CREATED, workflow.onBuildCreated(emitter, stepRunner));
 
   const scheduleStore = {};
-  const onScheduleTimeout =
-  _.partial(workflow.onScheduleTimeout, scheduleStore, emitter);
-  const scheduler =
-  _.partial(workflow.rescheduleTearDown, scheduleStore, onScheduleTimeout);
-  emitter.on(EVENTS.BUILD_FINISHED, _.partial(workflow.onBuildFinished, scheduler));
+  const onScheduleTimeout = workflow.onScheduleTimeout(scheduleStore, emitter);
+  const scheduler = workflow.rescheduleTearDown(scheduleStore, onScheduleTimeout);
+
+  emitter.on(EVENTS.BUILD_FINISHED, workflow.onBuildFinished(scheduler));
 };
 
 const createServer = () => {
